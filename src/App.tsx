@@ -58,7 +58,7 @@ interface KehadiranData {
 }
 
 const endpoint =
-  "https://script.google.com/macros/s/AKfycbwJTWvHOxgGgxLyyvlhU7lpts6frC46htvKNyyn0xtGAnCs7NheW-4Zg0aGfZsuvn4gBQ/exec";
+  "https://script.google.com/macros/s/AKfycbz6qDA4kcD_mmRwIp9m32IxfcMBg_dG-Aa5PDKDg1u4iMOla5I4l7B-kmvR6uR4buUN/exec";
 
 const throttle = (func: Function, delay: number) => {
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
@@ -1674,18 +1674,44 @@ const InputNilai = () => {
       doc.setTextColor(100, 100, 100);
       doc.text(`Total siswa: ${actualData.length}`, margin, currentY + 5);
 
-      // ─── AMBIL DATA TP DARI INDEXEDDB ───
+      // ─── AMBIL DATA TP DARI INDEXEDDB + FALLBACK SERVER ───
       let tpTableData: { tp: string; rincian: string; bab: string }[] = [];
       try {
         const mapelName = actualData[0]?.Data1 || "";
         const kelasName = (actualData[0]?.Data3 || "").replace(/[^0-9]/g, "");
         const semesterName = actualData[0]?.Data2 || "";
+        const semesterAngka = String(parseInt(semesterName) || semesterName);
+        const kelasAngka = kelasName.replace(/[^0-9]/g, "");
 
+        // Coba dari IndexedDB dulu, fallback ke server jika kosong
+        let tpRows: any[] = [];
         const tpCached = await idbLoad(STORE_TP);
         if (tpCached && tpCached.length > 1) {
-          const tpRows = tpCached.slice(1);
+          tpRows = tpCached.slice(1);
+          console.log(
+            `✅ Pakai data TP dari IndexedDB: ${tpRows.length} baris`
+          );
+        } else {
+          console.warn(
+            "⚠️ IndexedDB STORE_TP kosong, fetch DataTP dari server..."
+          );
+          try {
+            const tpRes = await fetch(`${endpoint}?sheet=DataTP`);
+            if (tpRes.ok) {
+              const tpJson = await tpRes.json();
+              if (tpJson.length > 1) {
+                tpRows = tpJson.slice(1);
+                console.log(
+                  `✅ Fallback berhasil: ${tpRows.length} baris TP dari server`
+                );
+              }
+            }
+          } catch (fetchErr) {
+            console.warn("Gagal fetch DataTP dari server:", fetchErr);
+          }
+        }
 
-          // ─── DEBUG: tampilkan 3 baris pertama TP ───
+        if (tpRows.length > 0) {
           console.log("🔎 ALL KEYS di row pertama:", Object.keys(tpRows[0]));
           console.log("🔎 Full row pertama:", JSON.stringify(tpRows[0]));
 
@@ -1696,10 +1722,9 @@ const InputNilai = () => {
                 .trim();
               const rowKelas = String(row.Data6 ?? "").trim();
               const rowSemester = String(row.Data5 ?? "").trim();
-              const semesterAngka = String(
-                parseInt(semesterName) || semesterName
+              console.log(
+                `🔍 Cek: mapel="${rowMapel}" kelas="${rowKelas}" sem="${rowSemester}" | target: "${mapelName}" "${kelasAngka}" "${semesterAngka}"`
               );
-              const kelasAngka = kelasName.replace(/[^0-9]/g, "");
               return (
                 rowMapel.toLowerCase() === mapelName.toLowerCase() &&
                 rowKelas === kelasAngka &&
@@ -1719,7 +1744,6 @@ const InputNilai = () => {
             }))
             .filter((item: any) => item.tp && item.rincian)
             .sort((a: any, b: any) => {
-              // Urutkan berdasarkan BAB dulu, lalu nomor TP
               const babA = parseFloat(a.bab) || 0;
               const babB = parseFloat(b.bab) || 0;
               if (babA !== babB) return babA - babB;
@@ -1728,15 +1752,15 @@ const InputNilai = () => {
               return (subA || 0) - (subB || 0);
             });
           console.log(
-            `✅ DataTP dari IndexedDB: ${tpTableData.length} TP ditemukan untuk ${mapelName} Kelas ${kelasName} Sem ${semesterName}`
+            `✅ DataTP final: ${tpTableData.length} TP ditemukan untuk ${mapelName} Kelas ${kelasAngka} Sem ${semesterAngka}`
           );
         } else {
           console.warn(
-            "⚠️ IndexedDB STORE_TP kosong, tabel TP tidak akan ditampilkan"
+            "⚠️ Tidak ada data TP sama sekali, tabel TP tidak ditampilkan"
           );
         }
       } catch (e) {
-        console.warn("Gagal load DataTP dari IndexedDB:", e);
+        console.warn("Gagal load DataTP:", e);
       }
 
       // ─── TABEL DAFTAR TP ───
@@ -11931,6 +11955,7 @@ const RekapNilai = () => {
         "Data15",
         "Data16",
         "Data17",
+        "Data18",
       ];
 
       // Filter kolom yang tidak punya nama mapel valid
@@ -12736,43 +12761,50 @@ const RekapNilai = () => {
       doc.setFont("helvetica", "normal");
 
       const leftCol = 20;
-      const rightCol = 130;
+      const rightCol = 140;
       const leftColTTD = 25;
       const centerColTTD = 100;
       const rightColTTD = 150;
       let y = 35;
 
+      const colonLeft = leftCol + 33; // posisi titik dua kolom kiri
+      const colonRight = rightCol + 30; // posisi titik dua kolom kanan
+
       doc.text("Nama Peserta Didik", leftCol, y);
-      doc.text(": " + namaSiswa.toUpperCase(), leftCol + 50, y);
+      doc.text(": " + namaSiswa.toUpperCase(), colonLeft, y);
       doc.text("Kelas", rightCol, y);
-      doc.text(": " + kelas, rightCol + 30, y);
+      doc.text(": " + kelas, colonRight, y);
 
       y += 7;
       doc.text("NISN", leftCol, y);
-      doc.text(`: ${nisn}`, leftCol + 50, y);
+      doc.text(`: ${nisn}`, colonLeft, y);
       doc.text("Fase", rightCol, y);
-      doc.text(`: ${getFase(kelas)}`, rightCol + 30, y);
+      doc.text(`: ${getFase(kelas)}`, colonRight, y);
 
       y += 7;
       doc.text("Nama Sekolah", leftCol, y);
       doc.text(
         ": " + (latestSchoolData?.namaSekolah || "UPT SD NEGERI 2 BATANG"),
-        leftCol + 50,
+        colonLeft,
         y
       );
       doc.text("Semester", rightCol, y);
-      doc.text(": " + selectedSemester, rightCol + 30, y); // ✅ UBAH INI
+      doc.text(": " + selectedSemester, colonRight, y);
 
       y += 7;
       doc.text("Alamat Sekolah", leftCol, y);
       const alamatLengkap = `${
         latestSchoolData?.alamatSekolah || "Desa Bungeng, Kecamatan Batang"
       }, ${latestSchoolData?.kabKota || ""}`;
-      doc.text(": " + alamatLengkap, leftCol + 50, y);
+      const alamatLines = doc.splitTextToSize(
+        ": " + alamatLengkap,
+        rightCol - colonLeft - 5
+      );
+      doc.text(alamatLines, colonLeft, y);
       doc.text("Tahun Pelajaran", rightCol, y);
       doc.text(
         ": " + (latestSchoolData?.tahunPelajaran || "2023/2024"),
-        rightCol + 30,
+        colonRight,
         y
       );
 
@@ -13433,6 +13465,7 @@ const RekapNilai = () => {
     "Data15",
     "Data16",
     "Data17",
+    "Data18",
   ];
 
   const hiddenHeaders = new Set(["Data2", "Data3", "Data4", "Data5"]);
@@ -13440,9 +13473,16 @@ const RekapNilai = () => {
   const fixedKeepHeaders = new Set(["Data1", "Data16", "Data17", "Data18"]);
 
   const headers = allHeaders.filter((h) => {
-    if (hiddenHeaders.has(h)) return false; // ← sembunyikan kolom ini
-    if (fixedKeepHeaders.has(h)) return true;
+    if (hiddenHeaders.has(h)) {
+      console.log(`${h} → DISEMBUNYIKAN`);
+      return false;
+    }
+    if (fixedKeepHeaders.has(h)) {
+      console.log(`${h} → LOLOS (fixedKeep)`);
+      return true;
+    }
     const dispH = (data[0]?.[h] || "").trim();
+    console.log(`${h} → nilai header: "${dispH}"`);
     return (
       dispH !== "" &&
       dispH !== h &&
@@ -13452,7 +13492,13 @@ const RekapNilai = () => {
     );
   });
 
-  const displayHeaders = headers.map((header) => data[0][header] || "");
+  console.log("Headers final:", headers);
+
+  const displayHeaders = headers.map((header) => {
+    const val = data[0][header];
+    console.log(`Header ${header} → "${val}"`); // debug sementara
+    return val || header; // fallback ke nama key jika kosong
+  });
   const actualData = data.slice(1);
 
   const filteredData =
